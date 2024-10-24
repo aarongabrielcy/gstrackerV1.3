@@ -1,147 +1,331 @@
-// Definir el modelo del módem
 #define TINY_GSM_MODEM_SIM7600
 
-#include <TinyGsmClient.h>
-#include <SoftwareSerial.h>
-
-// Pines de conexión serial del módulo SIM7600G
 #define MODEM_TX 17
 #define MODEM_RX 18
-#define SerialMon Serial
 #define SerialAT Serial1
+#include <TinyGsmClient.h>
+#define TINY_GSM_TEST_GPRS          true
+#define TINY_GSM_TEST_TCP           false
+#define TINY_GSM_TEST_GPS           false
+#define TINY_GSM_TEST_TIME          true
+#define TINY_GSM_TEST_TEMPERATURE   false
 
-// Configuración de la conexión celular y del servidor
-const char apn[] = "internet.itelcel.com"; // APN de la red celular
-const char user[] = "";                    // Usuario del APN (si es necesario)
-const char pass[] = "";                    // Contraseña del APN (si es necesario)
-const char server[] = "34.196.135.179";    // IP del servidor
-const int port = 5200;                     // Puerto del servidor
+#define GSM_PIN             ""
 
-const char raw_imei[] = "2049191131";
-const char raw_date[] = "20241023";
-const char raw_time[] = "19:04:33";
-const char raw_lat[] = "21.023694";
-const char raw_lon[] = "89.584651";
+// Your GPRS credentials, if any
+const char apn[] = "internet.itelcel.com";
+// const char apn[] = "ibasis.iot";
+const char gprsUser[] = "";
+const char gprsPass[] = "";
 
-// Tiempo entre envíos de datos
-const unsigned long delayMillis = 20000;   // 20 segundos
-
+// Server details to test TCP/SSL
+const char server[] = "34.196.135.179";
+bool gprs_state = false;
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
+ 
+  String ccid, imei, imsi, cop, raw_imei, datetime_module;
+  IPAddress local;
+  int csq;
 
-unsigned long previousMillis = 0;
+int year3 = 0,month3 = 0, day3 = 0, hour3 = 0, min3 = 0, sec3 = 0;
+float timezone = 0;
 
 void setup() {
-  // Inicialización de puertos seriales
-  SerialMon.begin(115200);
-  delay(10);
+  // Set console baud rate
+  Serial.begin(115200);
+
+  // Set GSM module baud rate
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
-
-  // Inicializar el módem
-  SerialMon.println("Iniciando el módem...");
-  modem.restart();
-
-  // Conectarse a la red GPRS usando el APN
-  SerialMon.print("Conectando a la red celular...");
-  if (!modem.gprsConnect(apn, user, pass)) {
-    SerialMon.println("Error al conectar a la red celular");
-    while (true);
-  }
-  SerialMon.println("Conectado a la red celular");
-
-  // Activar GNSS en el SIM7600
-  SerialMon.println("Activando GNSS...");
-  modem.enableGPS();
-  delay(15000);  // Esperar a que GNSS se inicialice
+  gprs_state = gprs_config();
 }
 
+void light_sleep(uint32_t sec ) {
+  esp_sleep_enable_timer_wakeup(sec * 1000000ULL);
+  esp_light_sleep_start();
+}
+void info_modem(){
+  ccid = modem.getSimCCID();
+  Serial.print("CCID: ");
+  Serial.println(ccid);
+  imei = modem.getIMEI();
+  raw_imei = formatIMEI(imei);
+  Serial.print("IMEI: ");
+  Serial.println(raw_imei);
+  imsi = modem.getIMSI();
+  Serial.print("IMSI: ");
+  Serial.println(imsi);
+  cop = modem.getOperator();
+  Serial.print("Operator: " );
+  Serial.println(cop);
+  local = modem.localIP();
+  Serial.print("Local IP: " );
+  Serial.println(local);
+  csq = modem.getSignalQuality();
+  Serial.print("Signal quality: ");
+  Serial.println(csq);   
+}
+bool gprs_config(){
+  String ret;
+  ret = modem.setNetworkMode(2);
+  Serial.print("setNetworkMode: ");
+  Serial.println(ret);
+  uint8_t mode = modem.getGNSSMode();
+  Serial.print("GNSS Mode: ");
+  Serial.println(mode);
+
+  modem.setGNSSMode(1, 1);
+  light_sleep(1);
+
+  String name = modem.getModemName();
+  Serial.print("Modem Name: " );
+  Serial.println(name);
+
+  String modemInfo = modem.getModemInfo();
+  Serial.print("Modem Info: ");
+  Serial.println(modemInfo);
+  // Unlock your SIM card with a PIN if needed
+  if (GSM_PIN && modem.getSimStatus() != 3) {
+    modem.simUnlock(GSM_PIN);
+  }
+
+  Serial.println("Waiting for network...");
+  if (!modem.waitForNetwork(600000L)) {
+    light_sleep(10);
+    return false;
+  }
+
+  if (modem.isNetworkConnected()) {
+    Serial.println("Network connected");
+  }
+  
+  Serial.print("Connecting to ");
+  Serial.println(apn);
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+    light_sleep(10);
+    return false;
+  }
+  return true;
+}
+bool network_info(){
+  bool res;
+  res = modem.isGprsConnected();
+  Serial.print("GPRS status: ");
+  if(res){
+    Serial.println("connected");
+    return true;
+  }
+  Serial.println("NOT connected");  
+  return false;
+}
 void loop() {
-  unsigned long currentMillis = millis();
+  // Restart takes quite some time
+  // To skip it, call init() instead of restart()
+  Serial.println("Initializing modem...");
+  if (!modem.init()) {
+    Serial.println("Failed to restart modem, delaying 10s and retrying");
+    return;
+  }
 
-  // Si ha pasado el tiempo configurado (20 segundos)
-  if (currentMillis - previousMillis >= delayMillis) {
-    previousMillis = currentMillis;
+if(!gprs_state){
+  gprs_config();
+}
+if(network_info()){
+  info_modem();
+  delay(6000);
+}
+#if TINY_GSM_TEST_TCP && defined TINY_GSM_MODEM_HAS_TCP
+  Serial.println("############################## TINY_GSM_TEST_TCP ############################ ");
 
-    // Variables para almacenar los datos GNSS
-    float gps_latitude  = 0;
-    float gps_longitude = 0;
-    float gps_speed     = 0;
-    float gps_altitude  = 0;
-    int   gps_vsat      = 0;
-    int   gps_usat      = 0;
-    float gps_accuracy  = 0;
-    int   gps_year      = 0;
-    int   gps_month     = 0;
-    int   gps_day       = 0;
-    int   gps_hour      = 0;
-    int   gps_minute    = 0;
-    int   gps_second    = 0;
-    float gps_course    = 0; // Variable para el course (rumbo o dirección)
-    int   gps_fix       = 0; // Estado del fix (1: sin fix, 2: 2D fix, 3: 3
+  TinyGsmClient client(modem, 0);
+  const int port = 5200;
+  Serial.print("Connecting to ");
+  Serial.println(server);
+  if (!client.connect(server, port)) {
+    Serial.println("... failed");
+  } else {
+    client.println("STT;"+raw_imei+";3FFFFF;95;1.0.21;1;20241024;21:10:17;04BB4A02;334;20;3C1F;18;+20.905637;-89.645585;0.19;81.36;17;1;00000001;00000000;1;1;0929;4.1;14.19");
 
-    // Solicitar la ubicación actual GNSS
-    SerialMon.println("Solicitando ubicación GNSS...");
-    if (modem.getGPS(&gps_latitude, &gps_longitude, &gps_speed, &gps_altitude,
-                     &gps_vsat, &gps_usat, &gps_accuracy, &gps_year, &gps_month,
-                     &gps_day, &gps_hour, &gps_minute, &gps_second)) {
-      
-      gps_course = modem.getGPSraw().toFloat();  // Obtener el course
-      gps_fix = (gps_usat > 0) ? 3 : 0;  
-      // Formatear la fecha y hora
-      String date = String(gps_year) + String(gps_month < 10 ? "0" : "") + String(gps_month) + String(gps_day < 10 ? "0" : "") + String(gps_day);
-      String time = String(gps_hour < 10 ? "0" : "") + String(gps_hour) + ":" + 
-                    String(gps_minute < 10 ? "0" : "") + String(gps_minute) + ":" +
-                    String(gps_second < 10 ? "0" : "") + String(gps_second);
+    // Wait for data to arrive
+    uint32_t start = millis();
+    while (client.connected() && !client.available() &&
+           millis() - start < 30000L) {
+      delay(100);
+    };
 
-      // Mostrar la información GNSS
-      SerialMon.print("Latitud: "); SerialMon.print(gps_latitude, 8);
-      SerialMon.print(", Longitud: "); SerialMon.print(gps_longitude, 8);
-      SerialMon.print(", Velocidad: "); SerialMon.print(gps_speed);
-      SerialMon.print(", Altitud: "); SerialMon.print(gps_altitude);
-      SerialMon.print(", Satélites visibles: "); SerialMon.print(gps_vsat);
-      SerialMon.print(", Satélites usados: "); SerialMon.println(gps_usat);
-
-      // Verificar la conexión con el servidor TCP
-      if (!client.connected()) {
-        SerialMon.print("Conectando al servidor...");
-        if (!client.connect(server, port)) {
-          SerialMon.println("Error al conectar al servidor");
-          return;
-        }
-        SerialMon.println("Conectado al servidor");
+    // Read data
+    start = millis();
+    while (client.connected() && millis() - start < 5000L) {
+      while (client.available()) {
+        Serial.write(client.read());
+        start = millis();
       }
-
-      // Formatear la cadena a enviar
-      String data = String(modem.getIMEI()) + ";" + String(date) + ";" + String(time) + ";" +
-                    String(gps_latitude, 8) + ";" + String(gps_longitude, 8) + ";" +
-                    String(gps_speed) + ";" + "0" + ";" + String(gps_vsat) + ";" + String(gps_usat) + ";";
-
-      // Enviar los datos al servidor
-      client.print(data);
-      SerialMon.println("Datos enviados al servidor: " + data);
-
-    } else {
-      SerialMon.println("No se obtuvo ubicación GNSS, enviando información de la red celular...");
-
-      // Obtener fecha y hora de la red celular
-      String date, time;
-      modem.sendAT("+CCLK?");
-      String response = modem.stream.readStringUntil('\n');
-      int start = response.indexOf("\"") + 1;
-      int end = response.lastIndexOf("\"");
-      if (start > 0 && end > start) {
-        String gsmDateTime = response.substring(start, end);
-        date = "20" + gsmDateTime.substring(0, 2) + gsmDateTime.substring(3, 5) + gsmDateTime.substring(6, 8); // YYYYMMDD
-        time = gsmDateTime.substring(9, 11) + ":" + gsmDateTime.substring(12, 14) + ":" + gsmDateTime.substring(15, 17); // HH:MM:SS
-      }
-       Serial.print("IMEI: ");
-       Serial.println(modem.getIMEI() );
-      // Formatear cadena para enviar solo red celular cunado no tiene fix
-       String data = "STT;"+String(raw_imei)+";3FFFFF;95;1.0.21;1;"+String(date)+";"+String(time)+";"+String(gps_latitude, 6) + ";"+String(gps_longitude, 6)+";"+String(gps_speed)+";"+String(gps_course)+";"+String(gps_usat)+";"+String(gps_fix) + ";00000001;00000000;1;1;0929;4.1;14.19";
-
-    //String data = "STT;"+String(raw_imei)+";3FFFFF;95;1.0.21;1;"+raw_date+";"+raw_time+";0000B0E2;334;20;1223;11;+"+raw_lat+";-"+raw_lon+";"+speed+";"+course+";"+satellites+";"+fix+";00000001;00000000;1;1;0929;4.1;14.19";
-      client.print(data);
-      SerialMon.println("Datos enviados al servidor (sin GNSS): " + data);
     }
   }
+#endif
+
+#if TINY_GSM_TEST_CALL && defined(CALL_TARGET)
+
+  Serial.print("Calling:", CALL_TARGET);
+  SerialAT.println("ATD"CALL_TARGET";");
+  modem.waitResponse();
+  light_sleep(20);
+#endif
+
+#if TINY_GSM_TEST_GPS && defined TINY_GSM_MODEM_HAS_GPS
+  Serial.print("Enabling GPS/GNSS/GLONASS");
+  modem.enableGPS();
+  light_sleep(2);
+
+  float lat2      = 0;
+  float lon2      = 0;
+  float speed2    = 0;
+  float alt2      = 0;
+  int   vsat2     = 0;
+  int   usat2     = 0;
+  float accuracy2 = 0;
+  int   year2     = 0;
+  int   month2    = 0;
+  int   day2      = 0;
+  int   hour2     = 0;
+  int   min2      = 0;
+  int   sec2      = 0;
+  Serial.print("Requesting current GPS/GNSS/GLONASS location");
+  for (;;) {
+    if (modem.getGPS(&lat2, &lon2, &speed2, &alt2, &vsat2, &usat2, &accuracy2,
+                     &year2, &month2, &day2, &hour2, &min2, &sec2)) {
+      String gps_data = "STT;"+String(year2)+String(month2)+String(day2)+";"+hour2+":"+min2+":"+sec2+";"+String(lat2, 6)+";"+String(lon2, 8)+";"+String(speed2)+";"+String(vsat2)+";"+String(usat2);
+      Serial.print("tAltitude: ");
+      Serial.println(alt2);
+      Serial.print("Accuracy: ");
+      Serial.println(accuracy2);
+      Serial.println(gps_data);
+      break;
+    } else {
+      light_sleep(2);
+    }
+  }
+  Serial.print("Retrieving GPS/GNSS/GLONASS location again as a string");
+  String gps_raw = modem.getGPSraw();
+  Serial.print("GPS/GNSS Based Location String:");
+  Serial.println(gps_raw);
+  Serial.print("Disabling GPS");
+  modem.disableGPS();
+#endif
+
+#if TINY_GSM_TEST_TIME && defined TINY_GSM_MODEM_HAS_TIME
+  Serial.println("############################## TINY_GSM_TEST_TIME ############################ ");
+  
+  for (int8_t i = 5; i; i--) {
+    Serial.println("Requesting current network time");
+    if (modem.getNetworkTime(&year3, &month3, &day3, &hour3, &min3, &sec3,
+                             &timezone)) {
+      Serial.print("DATE: ");
+      String date = String(year3)+"/"+String(month3)+"/"+String(day3); 
+      Serial.println(date);
+      Serial.print("TIME: ");
+      String time = String(hour3)+":"+String(min3)+":"+String(sec3); 
+      /*datetime_module = getFormattedUTCDateTime(year3, month3, day3, hour3, min3, sec3, timezone); 
+      Serial.print("DateTime Modem SIM: ");*/
+      Serial.println(datetime_module);
+      Serial.print("Timezone:" );
+      Serial.println(timezone);
+      break;
+    } else {
+      Serial.println("Couldn't get network time, retrying in 15s.");
+      light_sleep(15);
+    }
+  }
+  Serial.println("Retrieving time again as a string");
+  String time = modem.getGSMDateTime(DATE_FULL);
+  Serial.print("Current Network Time: ");
+  Serial.println(time);
+#endif
+
+/*#if TINY_GSM_TEST_GPRS
+  modem.gprsDisconnect();
+  light_sleep(5);
+  if (!modem.isGprsConnected()) {
+    Serial.println("GPRS disconnected");
+  } else {
+    Serial.println("GPRS disconnect: Failed.");
+  }
+#endif*/
+
+#if TINY_GSM_TEST_TEMPERATURE && defined TINY_GSM_MODEM_HAS_TEMPERATURE
+  Serial.println("############################## TINY_GSM_TEST_TEMPERATURE ############################ ");
+  float temp = modem.getTemperature();
+  Serial.print("Chip temperature:");
+  Serial.println(temp);
+#endif
+
+}
+String formatIMEI(String input) {
+  // Verifica que el string tenga al menos 10 caracteres
+  if (input.length() >= 10) {
+    // Devuelve los últimos 10 caracteres
+    return input.substring(input.length() - 10);
+  } else {
+    // Si el string es menor que 10 caracteres, devuelve el string completo
+    return input;
+  }
+}
+String getFormattedUTCDateTime(int year, int month, int day, int hour, int min, int sec, float timezone) {
+    // Ajustar la hora a UTC restando la diferencia de zona horaria
+    hour -= int(timezone); // Convertimos timezone a un valor entero (horas)
+    
+    // Ajustar si la hora es negativa o pasa de 24 horas
+    if (hour < 0) {
+        hour += 24;
+        day -= 1;  // Restamos un día si la hora es negativa
+
+        // Ajustar el mes y año si el día es menor que 1
+        if (day < 1) {
+            month -= 1;
+            if (month < 1) {
+                month = 12;
+                year -= 1;
+            }
+            // Ajustar el día con base en el nuevo mes
+            day = daysInMonth(month, year);
+        }
+    } else if (hour >= 24) {
+        hour -= 24;
+        day += 1;  // Sumamos un día si la hora pasa de 24
+
+        // Ajustar el mes y año si el día excede el número de días en el mes actual
+        if (day > daysInMonth(month, year)) {
+            day = 1;
+            month += 1;
+            if (month > 12) {
+                month = 1;
+                year += 1;
+            }
+        }
+    }
+
+    // Crear la cadena en formato "YYYYMMDD;HH:MM:SS"
+    char buffer[20];
+    sprintf(buffer, "%04d%02d%02d;%02d:%02d:%02d", year, month, day, hour, min, sec);
+
+    // Devolver la cadena formateada
+    return String(buffer);
+}
+
+// Función para obtener el número de días en un mes determinado
+int daysInMonth(int month, int year) {
+    if (month == 2) {
+        // Verificar si es año bisiesto
+        if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
+            return 29;
+        } else {
+            return 28;
+        }
+    }
+    // Meses con 31 días
+    if (month == 1 || month == 3 || month == 5 || month == 7 || month == 8 || month == 10 || month == 12) {
+        return 31;
+    }
+    // Meses con 30 días
+    return 30;
 }
