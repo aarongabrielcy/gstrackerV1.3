@@ -10,7 +10,7 @@
 #define TINY_GSM_TEST_TIME          true
 #define TINY_GSM_TEST_TEMPERATURE   false
 
-#define GSM_PIN             ""
+#define GSM_PIN ""
 
 // Your GPRS credentials, if any
 const char apn[] = "internet.itelcel.com";
@@ -29,8 +29,8 @@ TinyGsmClient client(modem);
   int csq;
 
 int year3 = 0,month3 = 0, day3 = 0, hour3 = 0, min3 = 0, sec3 = 0;
-float timezone = 0;
-
+float timezone = 0, lat2 = 0,lon2= 0,speed2=0,alt2 = 0,accuracy2 = 0;
+int vsat2= 0,usat2= 0,year2= 0,month2 = 0, day2 = 0, hour2 = 0,min2 = 0,sec2 = 0;
 void setup() {
   // Set console baud rate
   Serial.begin(115200);
@@ -38,6 +38,7 @@ void setup() {
   // Set GSM module baud rate
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
   gprs_state = gprs_config();
+  //modem.enableGPS();
 }
 
 void light_sleep(uint32_t sec ) {
@@ -134,6 +135,17 @@ if(network_info()){
   info_modem();
   delay(6000);
 }
+// Enviar comando AT para obtener los datos NMEA
+  /*SerialAT.println(F("+CGPSNMEA?"));
+  String nmeaData = modem.stream.readStringUntil('\n');  // Leer la respuesta NMEA
+  
+  // Imprimir la respuesta completa en el puerto serie
+  Serial.println("Datos NMEA recibidos:");
+  Serial.println(nmeaData);
+
+  // Parsear la información relevante
+  parseNMEAData(nmeaData);*/
+
 #if TINY_GSM_TEST_TCP && defined TINY_GSM_MODEM_HAS_TCP
   Serial.println("############################## TINY_GSM_TEST_TCP ############################ ");
 
@@ -177,40 +189,34 @@ if(network_info()){
   modem.enableGPS();
   light_sleep(2);
 
-  float lat2      = 0;
-  float lon2      = 0;
-  float speed2    = 0;
-  float alt2      = 0;
-  int   vsat2     = 0;
-  int   usat2     = 0;
-  float accuracy2 = 0;
-  int   year2     = 0;
-  int   month2    = 0;
-  int   day2      = 0;
-  int   hour2     = 0;
-  int   min2      = 0;
-  int   sec2      = 0;
   Serial.print("Requesting current GPS/GNSS/GLONASS location");
-  for (;;) {
+  //for (;;) {
     if (modem.getGPS(&lat2, &lon2, &speed2, &alt2, &vsat2, &usat2, &accuracy2,
                      &year2, &month2, &day2, &hour2, &min2, &sec2)) {
-      String gps_data = "STT;"+String(year2)+String(month2)+String(day2)+";"+hour2+":"+min2+":"+sec2+";"+String(lat2, 6)+";"+String(lon2, 8)+";"+String(speed2)+";"+String(vsat2)+";"+String(usat2);
-      Serial.print("tAltitude: ");
+      String datetime_gnss = String(year2)+String(month2)+String(day2)+";"+hour2+":"+min2+":"+sec2+";"+String(lat2, 6)+";"+String(lon2, 8);
+      Serial.print("speed: ");
+      Serial.println(speed2);
+      Serial.print("Satellite visible: ");
+      Serial.println(vsat2);
+      Serial.print("satellites in use: ");
+      Serial.println(usat2);
+      Serial.print("Altitude: ");
       Serial.println(alt2);
       Serial.print("Accuracy: ");
       Serial.println(accuracy2);
-      Serial.println(gps_data);
-      break;
+      Serial.print("dateTime GNSS: ");
+      Serial.println(datetime_gnss);
+      //break;
     } else {
       light_sleep(2);
     }
-  }
+  //}
   Serial.print("Retrieving GPS/GNSS/GLONASS location again as a string");
   String gps_raw = modem.getGPSraw();
-  Serial.print("GPS/GNSS Based Location String:");
+  Serial.print("GPS/GNSS Based Location String: ");
   Serial.println(gps_raw);
-  Serial.print("Disabling GPS");
-  modem.disableGPS();
+  //Serial.print("Disabling GPS");
+  //modem.disableGPS();
 #endif
 
 #if TINY_GSM_TEST_TIME && defined TINY_GSM_MODEM_HAS_TIME
@@ -220,13 +226,14 @@ if(network_info()){
     Serial.println("Requesting current network time");
     if (modem.getNetworkTime(&year3, &month3, &day3, &hour3, &min3, &sec3,
                              &timezone)) {
-      Serial.print("DATE: ");
+      /*Serial.print("DATE: ");
       String date = String(year3)+"/"+String(month3)+"/"+String(day3); 
       Serial.println(date);
       Serial.print("TIME: ");
       String time = String(hour3)+":"+String(min3)+":"+String(sec3); 
-      /*datetime_module = getFormattedUTCDateTime(year3, month3, day3, hour3, min3, sec3, timezone); 
-      Serial.print("DateTime Modem SIM: ");*/
+      Serial.println(time);*/
+      datetime_module = getFormattedUTCDateTime(year3, month3, day3, hour3, min3, sec3, timezone); 
+      Serial.print("DateTime Modem SIM: ");
       Serial.println(datetime_module);
       Serial.print("Timezone:" );
       Serial.println(timezone);
@@ -328,4 +335,25 @@ int daysInMonth(int month, int year) {
     }
     // Meses con 30 días
     return 30;
+}
+void parseNMEAData(String nmeaData) {
+  if (nmeaData.indexOf("GPGSV") >= 0) {
+    Serial.println("Satélites GPS en vista detectados:");
+    Serial.println("Datos GPS GSV: " + nmeaData);  // Satélites en vista para GPS
+  }
+
+  if (nmeaData.indexOf("GLGSV") >= 0) {
+    Serial.println("Satélites GLONASS en vista detectados:");
+    Serial.println("Datos GLONASS GSV: " + nmeaData);  // Satélites en vista para GLONASS
+  }
+
+  if (nmeaData.indexOf("BDGSV") >= 0) {
+    Serial.println("Satélites BeiDou en vista detectados:");
+    Serial.println("Datos BeiDou GSV: " + nmeaData);  // Satélites en vista para BeiDou
+  }
+
+  if (nmeaData.indexOf("GNGSA") >= 0) {
+    Serial.println("Satélites en uso detectados (GNSS Fix):");
+    Serial.println("Datos GNGSA: " + nmeaData);  // Satélites en uso para el GNSS fix (podría incluir varios sistemas)
+  }
 }
